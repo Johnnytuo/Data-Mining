@@ -1,0 +1,355 @@
+---
+title: "mars"
+author: "tuo"
+date: "2018/12/8"
+output: html_document
+---
+```{r}
+suppressMessages(library(tidyverse))
+suppressMessages(library(tidymodels))
+suppressMessages(library(ggplot2))
+suppressMessages(library(DataExplorer))
+suppressMessages(library(caret))
+suppressMessages(library(earth))
+suppressMessages(library(plyr))
+suppressMessages(library(dplyr))
+suppressMessages(library(corrplot))
+suppressMessages(library(tidyposterior))
+suppressMessages(library(readr))
+suppressMessages(library(pROC))
+suppressMessages(library(randomForest))
+suppressMessages(library(gridExtra))
+suppressMessages(library(doParallel))
+suppressMessages(library(tidyverse))
+suppressMessages(library(tidymodels))
+suppressMessages(library(tidyverse))
+suppressMessages(library(dplyr))
+suppressMessages(library(ggplot2))
+suppressMessages(library(DataExplorer))
+suppressMessages(library(gridExtra))
+suppressMessages(library(doParallel))
+suppressMessages(library(caret))
+```
+
+
+
+
+### Data preparation
+#### Data split
+
+In the first part, we split the data into training and testing sets, accounting for 75% and 25% of the whole dataset respectively.
+
+```{r}
+data<-load("Kobe_shot_train_test_data.RData")
+
+train_data<-Kobe_shot_train
+test_data<-Kobe_shot_test %>%
+  na.omit()
+introduce(train_data)
+```
+
+
+
+```{r}
+cv_splits <- vfold_cv(train_data, v = 10, strata = "shot_made_flag")
+ctrl_mars <- trainControl(
+    method = "cv",
+    classProbs = TRUE,
+    summaryFunction = twoClassSummary,
+    savePredictions = "final",
+    sampling = "down"
+  )
+
+```
+
+
+
+#### create mars recipe
+In the second part, we create a recipe for Mars model. Basically, I set all variables except class as my predictors, and make some transformations on the raw data based on their properties. 
+
+```{r}
+recipe_mars <- recipe(shot_made_flag ~ .,
+                    data = train_data) %>%
+                    step_zv(all_predictors())
+```
+
+
+```{r}
+# recipe gbm
+recipe_gbm <- recipe(shot_made_flag~., data=train_data) %>%
+  step_nzv(all_predictors())
+
+```
+
+
+
+
+#### Specify control and tuning grids
+
+In the third part, I specify different control and tuning grids. 
+
+In terms of control methods, I simply change the resampling methods, I try cross validation, optimism bootstrap and adaptive cross validation for random forest model, and just use repeated cross validation for GBM model. I take more trials and make more adjustments in terms of tuning parameters.
+
+
+###control and grid set
+```{r}
+ctrl_mars$verboseIter <- FALSE
+grid_mars1 <- expand.grid(degree = 1:2, nprune = seq(2, 50, by = 2))
+grid_mars2 <- expand.grid(degree = 1, nprune = 20)
+
+```
+
+
+
+```{r}
+# ctrl
+ctrl_gbm <- trainControl(
+     method="cv",
+     savePredictions="final", 
+     verboseIter = FALSE, 
+     sampling = "down",
+     summaryFunction = twoClassSummary,
+     classProbs = TRUE
+     )
+```
+
+
+
+
+
+```{r}
+Kobe_shot_grid_gbm1 <- expand.grid(
+     n.trees = 100, 
+     shrinkage = 0.05,
+     interaction.depth = 1,
+     n.minobsinnode = 10
+     )
+
+
+Kobe_shot_grid_gbm2 <- expand.grid(
+     n.trees=seq(20,180,40), 
+     shrinkage=seq(0.01, 0.1, 0.02),
+     interaction.depth=1,
+     n.minobsinnode=10
+     )
+
+
+```
+
+
+
+```{r}
+parallel::detectCores(logical = TRUE)
+cl <- makeCluster(8) 
+registerDoParallel(cl)
+```
+
+```{r}
+#Train the gbm model
+set.seed(120)
+
+model_gbm1 <- train(
+    recipe_gbm, 
+    data=train_data,
+    method="gbm",
+    trControl=ctrl_gbm,
+    tuneGrid=Kobe_shot_grid_gbm1,
+    metric="ROC"
+    #distribution = "bernoulli"
+)
+Kobe_shot_gbm_mod1<-model_gbm1
+save(model_gbm1,file="Kobe_shot_gbm_mod1.rda")
+```
+
+
+```{r}
+#Train the gbm model
+set.seed(122)
+
+model_gbm2 <- train(
+    recipe_gbm, 
+    data=train_data,
+    method="gbm",
+    trControl=ctrl_gbm,
+    tuneGrid=Kobe_shot_grid_gbm2,
+    metric="ROC"
+    #distribution = "bernoulli"
+)
+Kobe_shot_gbm_mod2<-model_gbm2
+save(model_gbm2,file="Kobe_shot_gbm_mod2.rda")
+```
+
+
+
+```{r}
+set.seed(3544)
+#model_mars <- train(
+#    recipe_mars, 
+#    data = train_data,
+#    method = "earth",
+#    tuneGrid = grid_mars1,
+#    trControl = ctrl_mars,
+#    metric="ROC"
+#)
+#save(model_mars,file="mod.rda")
+```
+
+
+
+
+
+
+```{r}
+set.seed(3102)
+#model_mars2 <- train(
+#    recipe_mars, 
+#    data = train_data,
+#    method = "earth",
+#    tuneGrid = grid_mars2,
+#    trControl = ctrl_mars,
+#    metric="ROC"
+#)
+#save(model_mars2,file="mod2.rda")
+
+```
+
+
+
+```{r}
+load("mod.rda")
+load("mod2.rda")
+load("Kobe_shot_gbm_mod1.rda")
+load("Kobe_shot_gbm_mod2.rda")
+
+#para_tune_mar <- ggplot(model_mars) + theme(legend.position = "top") + labs(title = "Figure 1. Parameter tuning \nfor mars model 1")
+#model_mars$finalModel
+
+#para_tune_mars2 <- ggplot(model_mars2) + theme(legend.position = "top") + labs(title = "Figure 2. Parameter tuning \nfor mars model 2")
+#model_mars2$finalModel
+```
+
+
+```{r}
+getTrainPerf(Kobe_shot_mars_mod1)
+```
+
+
+```{r}
+getTrainPerf(Kobe_shot_mars_mod2)
+```
+
+
+```{r}
+#ggplot(model_mars)
+```
+
+
+```{r}
+plot_roc <- function(x, ...) {
+  roc_obj <- roc(
+    response = x[["obs"]], 
+    predictor = x[["No"]], 
+    levels = rev(levels(x$obs))
+  )
+  plot(roc_obj, ...)
+}
+#plot_roc(model_mars$pred)
+
+plot_roc(Kobe_shot_mars_mod1$pred, lty = 3, lwd = 1)
+plot_roc(Kobe_shot_mars_mod2$pred, col = "red", lty = 2, lwd = 1, add = TRUE)
+plot_roc(Kobe_shot_rf_mod1$pred, col = "orange", lty = 3, lwd = 1, add = TRUE)
+plot_roc(Kobe_shot_rf_mod2$pred, col = "brown", lty = 4, lwd = 1, add = TRUE)
+plot_roc(Kobe_shot_gbm_mod1$pred, col = "blue", lty = 5, lwd = 1, add = TRUE)
+plot_roc(Kobe_shot_gbm_mod2$pred, col = "green", lty = 6, lwd = 1, add = TRUE)
+legend("bottomright", legend = c("MARS_1", "MARS_2","RF_1", "RF_2", "GBM_1","GBM_2"), col = c("black","red","orange", "brown", "blue", "green"), ncol = 2, pch = 20)
+title(main = "Figure 7. ROC comparison for all six models")
+
+```
+
+
+
+```{r}
+rs <- resamples(list(mars1=model_mars2, mars2=model_mars,rf1=Kobe_shot_rf_mod1,rf2=Kobe_shot_rf_mod2,gbm1=Kobe_shot_gbm_mod1,gbm2=Kobe_shot_gbm_mod2))
+roc_mod <- perf_mod(rs, seed=2345, iter=2000, metric="ROC")
+
+posteriors <- tidy(roc_mod, seed = 23456)
+summary(posteriors)
+```
+
+
+
+```{r}
+
+posteriors <- tidy(roc_mod, seed = 23456)
+summary(posteriors)
+
+```
+
+```{r}
+Kobe_shot_mars_mod1 <- model_mars2
+save(Kobe_shot_mars_mod2, file = "Kobe_shot_mars_mod1.rda")
+Kobe_shot_mars_mod2 <- model_mars
+save(Kobe_shot_mars_mod1, file = "Kobe_shot_mars_mod2.rda")
+Kobe_shot_gbm_mod1<-model_gbm
+save(Kobe_shot_gbm_mod1, file = "Kobe_shot_gbm_mod1.rda")
+
+
+Kobe_shot_test <- Kobe_shot_test %>%
+  na.omit()
+
+
+
+model_perf <- function(mod_obj) {
+  assess_dat <- Kobe_shot_test %>%
+  	mutate(
+  		pred = predict(
+  			mod_obj, 
+  			newdata = Kobe_shot_test
+  		)
+  	)
+  
+  conf_mat <- table(predicted = assess_dat$pred, actual = assess_dat$shot_made_flag)
+  sensitivity <- sensitivity(conf_mat)
+  specificity <- specificity(conf_mat)
+  data.frame(sensitivity = sensitivity, specificity = specificity)
+}
+
+#model_perf(Kobe_shot_gbm_mod1)
+
+mod_comparison <- rbind(model_perf(Kobe_shot_mars_mod1), model_perf(Kobe_shot_mars_mod2),
+                        model_perf(Kobe_shot_rf_mod1), model_perf(Kobe_shot_rf_mod2),
+                        model_perf(Kobe_shot_gbm_mod1),model_perf(Kobe_shot_gbm_mod2)) %>% 
+    mutate(model = c("MARS_1", "MARS_2", "RF_1", "RF_2", "GBM_1","GBM_2")) %>% 
+    select(model, sensitivity, specificity)
+
+mod_comparison
+```
+
+
+
+```{r Variable importance for all six models, message = FALSE, warning = FALSE, cache = TRUE}
+
+mars2_imp <- varImp(Kobe_shot_mars_mod2, scale = FALSE)
+mars2_varImp_plot <- ggplot(mars2_imp, top = 10) + xlab("") +
+     labs(title = "Figure 10. Variable Importance \nfor MARS_2")
+mars2_varImp_plot
+```
+
+
+
+```{r}
+pred_mars <-predict(Kobe_shot_mars_mod1, test_data)
+confusionMatrix(pred_mars,test_data$shot_made_flag)
+```
+
+```{r}
+pred_mars <-predict(Kobe_shot_gbm_mod1, test_data)
+confusionMatrix(pred_mars,test_data$shot_made_flag)
+```
+
+
+```{r}
+pred_mars <-predict(Kobe_shot_rf_mod2, test_data)
+confusionMatrix(pred_mars,test_data$shot_made_flag)
+```
+
